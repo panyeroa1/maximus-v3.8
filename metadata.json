@@ -1,0 +1,8 @@
+{
+  "name": "Eburon Interface",
+  "description": "A real-time, immersive visual and auditory feed from the Eburon unit. This app simulates the robot's senses, processing visual data with Gemini Robotics-ER 1.5 and enabling live voice interaction and synthesized voice feedback.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
