@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { EburonVision } from './components/EburonVision';
 import { HUD } from './components/HUD';
-import { DetectedObject, PlanStep, TranscriptEntry, OcrResult } from './types';
+import { Initializer } from './components/Initializer';
+import { DetectedObject, OcrResult } from './types';
 import { getCommandPlan, executePlan, decode, decodeAudioData, encode } from './services/geminiService';
 import { preGeneratedAudio } from './services/preGeneratedAudio';
 import { audioManager } from './services/audioManager';
@@ -22,13 +23,9 @@ const App: React.FC = () => {
   
   // Interaction & Planning State
   const [selectedObject, setSelectedObject] = useState<DetectedObject | null>(null);
-  const [plan, setPlan] = useState<PlanStep[] | null>(null);
-  const [executionLog, setExecutionLog] = useState<string[]>([]);
-  const [isExecutingPlan, setIsExecutingPlan] = useState(false);
   
   // Conversation State
   const [isConversing, setIsConversing] = useState(false);
-  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   // FIX: Using `any` because the `LiveSession` type is not exported from the SDK.
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -40,6 +37,10 @@ const App: React.FC = () => {
   const currentOutputTranscription = useRef('');
   const liveFrameIntervalRef = useRef<number | null>(null);
 
+  // Audio Visualizer State
+  const [audioVisualizerData, setAudioVisualizerData] = useState<Uint8Array | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const visualizerFrameRef = useRef<number | null>(null);
 
   const playSynthesizedAudio = useCallback(async (base64Audio: string) => {
     const ctx = audioManager.getTTSContext();
@@ -88,6 +89,14 @@ const App: React.FC = () => {
     audioSourcesRef.current.forEach(source => source.stop());
     audioSourcesRef.current.clear();
     nextStartTimeRef.current = 0;
+
+    // Stop visualizer
+    if (visualizerFrameRef.current) cancelAnimationFrame(visualizerFrameRef.current);
+    visualizerFrameRef.current = null;
+    analyserRef.current?.disconnect();
+    analyserRef.current = null;
+    setAudioVisualizerData(null);
+
   }, [isSystemActive, setStatus]);
 
   const toggleSystem = useCallback(() => {
@@ -101,9 +110,6 @@ const App: React.FC = () => {
       setAllDetectedObjects([]);
       setOcrData([]);
       setSelectedObject(null);
-      setPlan(null);
-      setExecutionLog([]);
-      setTranscripts([]);
     } else {
       setIsSystemActive(true);
       setStatus('INITIALIZING...');
@@ -118,13 +124,30 @@ const App: React.FC = () => {
   }, []);
 
   const processCommand = useCallback(async (command: string, contextObject?: DetectedObject | null) => {
-    if (!command.trim() || isExecutingPlan) return;
+    if (!command.trim()) return;
+  
+    // Intercept selection commands
+    const selectionMatch = command.trim().match(/^(select|target|lock on to|focus on) (.+)/i);
+    if (selectionMatch && selectionMatch[2]) {
+        const targetLabel = selectionMatch[2].trim().toLowerCase();
+        
+        const foundObject = allDetectedObjects.find(obj => 
+            obj.label.toLowerCase().includes(targetLabel)
+        );
+
+        if (foundObject) {
+            setSelectedObject(foundObject);
+            setStatus(`TARGET LOCKED: ${foundObject.label.toUpperCase()}`);
+            speak('targetAcquired');
+        } else {
+            setStatus(`TARGET NOT FOUND: ${targetLabel.toUpperCase()}`);
+            speak('targetNotFound');
+        }
+        return; // Stop further processing for selection commands
+    }
 
     setStatus('BRAIN: PROCESSING...');
-    setIsExecutingPlan(true);
-    setPlan(null);
-    setExecutionLog(prev => [...prev.slice(-10), `> CMD: ${command}`]);
-
+    
     const planContext = {
       sceneObjects: allDetectedObjects,
       selectedObject: contextObject ?? selectedObject,
@@ -132,26 +155,15 @@ const App: React.FC = () => {
     };
 
     const newPlan = await getCommandPlan(command, planContext);
-    setPlan(newPlan);
 
     if (newPlan && newPlan.length > 0 && newPlan[0].function !== 'error' && newPlan[0].function !== 'info') {
       setStatus('EXECUTING PLAN...');
-      for await (const log of executePlan(newPlan)) {
-        setExecutionLog(prev => [...prev.slice(-10), log]);
-      }
-    } else {
-      setExecutionLog(prev => [...prev.slice(-10), newPlan?.[0]?.reasoning || 'No valid plan generated.']);
+      // Execution is now silent, only status changes matter.
+      for await (const _ of executePlan(newPlan)) {}
     }
 
     setStatus('AWAITING COMMAND');
-    setIsExecutingPlan(false);
-  }, [allDetectedObjects, isExecutingPlan, selectedObject, ocrData]);
-
-  const handleClearInteraction = () => {
-    setSelectedObject(null);
-    setPlan(null);
-    setExecutionLog([]);
-  };
+  }, [allDetectedObjects, selectedObject, ocrData, speak]);
 
   const startConversation = useCallback(async () => {
     if (isConversing) return;
@@ -205,21 +217,30 @@ const App: React.FC = () => {
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputAudioContext.destination);
+
+            // Setup Analyser for visualization
+            const analyser = inputAudioContext.createAnalyser();
+            analyser.fftSize = 64;
+            analyser.smoothingTimeConstant = 0.8;
+            analyserRef.current = analyser;
+            source.connect(analyser);
+
+            const visualizerLoop = () => {
+              if (analyserRef.current) {
+                const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+                analyserRef.current.getByteFrequencyData(dataArray);
+                setAudioVisualizerData(dataArray);
+                visualizerFrameRef.current = requestAnimationFrame(visualizerLoop);
+              }
+            };
+            visualizerLoop();
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.serverContent?.outputTranscription) currentOutputTranscription.current += message.serverContent.outputTranscription.text;
             if (message.serverContent?.inputTranscription) currentInputTranscription.current += message.serverContent.inputTranscription.text;
             if (message.serverContent?.turnComplete) {
                 const finalInput = currentInputTranscription.current.trim();
-                const finalOutput = currentOutputTranscription.current.trim();
-                
-                setTranscripts(prev => {
-                    const newTranscripts = [...prev];
-                    if (finalInput) newTranscripts.push({ speaker: 'user', text: finalInput });
-                    if (finalOutput) newTranscripts.push({ speaker: 'eburon', text: finalOutput });
-                    return newTranscripts.slice(-10);
-                });
-
+                // No need to display transcript, just process command
                 if(finalInput) processCommand(finalInput);
                 currentInputTranscription.current = '';
                 currentOutputTranscription.current = '';
@@ -378,7 +399,8 @@ TERMINATION_PHRASE:
   }, [error, speak]);
 
   return (
-    <div className="w-screen h-screen bg-black overflow-hidden relative text-cyan-300">
+    <div className="w-screen h-screen bg-black overflow-hidden relative">
+      {status === 'INITIALIZING...' && <Initializer />}
       <EburonVision
         isActive={isSystemActive}
         setStatus={setStatus}
@@ -392,7 +414,6 @@ TERMINATION_PHRASE:
       <HUD
         isActive={isSystemActive}
         status={status}
-        isExecutingPlan={isExecutingPlan}
         error={error}
         toggleSystem={toggleSystem}
         isConversing={isConversing}
@@ -400,10 +421,7 @@ TERMINATION_PHRASE:
         stopConversation={stopConversation}
         allDetectedObjects={allDetectedObjects}
         selectedObject={selectedObject}
-        onClearSelection={handleClearInteraction}
-        executionLog={executionLog}
-        transcripts={transcripts}
-        plan={plan}
+        audioVisualizerData={audioVisualizerData}
       />
     </div>
   );

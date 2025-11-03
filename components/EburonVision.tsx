@@ -20,7 +20,6 @@ const JPEG_QUALITY = 0.7;
 export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus, setError, videoRef, lastAnalyzedFrame, onSceneUpdate, onObjectSelected, selectedObject }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
-  const [ocrResults, setOcrResults] = useState<OcrResult[]>([]);
   const analysisIntervalRef = useRef<number | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const previousLabelsRef = useRef<Set<string>>(new Set());
@@ -38,7 +37,6 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
         videoRef.current.srcObject = null;
     }
     setDetectedObjects([]);
-    setOcrResults([]);
     previousLabelsRef.current.clear();
   }, [videoRef]);
 
@@ -87,7 +85,6 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
             
             previousLabelsRef.current = newLabels;
             setDetectedObjects(newObjects);
-            setOcrResults(newOcr);
             onSceneUpdate({ objects: newObjects, ocr: newOcr });
           } catch (err) {
             console.error('Failed during frame analysis:', err);
@@ -158,88 +155,13 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
     if (!ctx) return;
 
     let animationFrameId: number;
-
-    const drawObjects = () => {
+    
+    const renderLoop = () => {
         canvas.width = video.clientWidth;
         canvas.height = video.clientHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        detectedObjects.forEach(obj => {
-            const isSelected = selectedObject?.id === obj.id;
-            if (isSelected) return; // Draw selected object separately later
-
-            const [y, x] = obj.point;
-            const canvasX = (x / 1000) * canvas.width;
-            const canvasY = (y / 1000) * canvas.height;
-
-            ctx.beginPath();
-            ctx.arc(canvasX, canvasY, 3, 0, 2 * Math.PI); // Smaller dots
-            ctx.fillStyle = 'rgba(0, 255, 255, 0.5)'; // More transparent
-            ctx.fill();
-        });
-
-        if (selectedObject) {
-            const [y, x] = selectedObject.point;
-            const canvasX = (x / 1000) * canvas.width;
-            const canvasY = (y / 1000) * canvas.height;
-            const size = 15;
-
-            ctx.strokeStyle = 'rgba(255, 255, 0, 0.9)';
-            ctx.lineWidth = 2;
-            ctx.shadowColor = 'yellow';
-            ctx.shadowBlur = 10;
-
-            // Targeting brackets
-            ctx.beginPath();
-            // Top-left
-            ctx.moveTo(canvasX - size, canvasY - size);
-            ctx.lineTo(canvasX - size + 8, canvasY - size);
-            ctx.moveTo(canvasX - size, canvasY - size);
-            ctx.lineTo(canvasX - size, canvasY - size + 8);
-            // Top-right
-            ctx.moveTo(canvasX + size, canvasY - size);
-            ctx.lineTo(canvasX + size - 8, canvasY - size);
-            ctx.moveTo(canvasX + size, canvasY - size);
-            ctx.lineTo(canvasX + size, canvasY - size + 8);
-            // Bottom-left
-            ctx.moveTo(canvasX - size, canvasY + size);
-            ctx.lineTo(canvasX - size + 8, canvasY + size);
-            ctx.moveTo(canvasX - size, canvasY + size);
-            ctx.lineTo(canvasX - size, canvasY + size - 8);
-            // Bottom-right
-            ctx.moveTo(canvasX + size, canvasY + size);
-            ctx.lineTo(canvasX + size - 8, canvasY + size);
-            ctx.moveTo(canvasX + size, canvasY + size);
-            ctx.lineTo(canvasX + size, canvasY + size - 8);
-            ctx.stroke();
-
-            ctx.font = '16px "Exo 2", sans-serif';
-            ctx.fillStyle = '#FFFF00';
-            ctx.shadowBlur = 4;
-            ctx.textAlign = 'center';
-            ctx.fillText(selectedObject.label.toUpperCase(), canvasX, canvasY - size - 15);
-            ctx.shadowBlur = 0;
-            ctx.textAlign = 'start'; // Reset alignment
-        }
-
-        ocrResults.forEach(res => {
-            const [ymin, xmin, ymax, xmax] = res.box_2d;
-            const startX = (xmin / 1000) * canvas.width;
-            const startY = (ymin / 1000) * canvas.height;
-            const width = ((xmax - xmin) / 1000) * canvas.width;
-            const height = ((ymax - ymin) / 1000) * canvas.height;
-
-            ctx.strokeStyle = 'rgba(100, 255, 100, 0.4)'; // More transparent green
-            ctx.lineWidth = 1;
-            ctx.strokeRect(startX, startY, width, height);
-        });
-    };
-    
-    const renderLoop = () => {
-        if (!video.paused && !video.ended) {
-            drawObjects();
-            animationFrameId = requestAnimationFrame(renderLoop);
-        }
+        // All drawing logic removed to keep the view clean as per the new design.
+        animationFrameId = requestAnimationFrame(renderLoop);
     };
     
     const handlePlay = () => {
@@ -251,7 +173,7 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
       video.removeEventListener('play', handlePlay);
       cancelAnimationFrame(animationFrameId);
     };
-  }, [detectedObjects, ocrResults, videoRef, selectedObject]);
+  }, [videoRef]);
 
   return (
     <div className="w-full h-full bg-black relative">

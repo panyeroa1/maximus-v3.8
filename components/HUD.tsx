@@ -1,27 +1,27 @@
 import React, { useRef, useEffect } from 'react';
-import { DetectedObject, PlanStep, TranscriptEntry } from '../types';
+import { DetectedObject } from '../types';
 
-const PowerIcon: React.FC = () => (
-    <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+// Icons as React Components
+const HealthIcon: React.FC<{className?: string}> = ({className}) => <svg viewBox="0 0 20 20" className={className} fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>;
+const SignalIcon: React.FC<{className?: string}> = ({className}) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}><path d="M4.80005 12.0001C4.80005 12.0001 7.20005 8.4001 12 8.4001C16.8 8.4001 19.2 12.0001 19.2 12.0001" strokeLinecap="round" strokeLinejoin="round" /><path d="M7.20005 15.6001C7.20005 15.6001 8.88005 13.9201 12 13.9201C15.12 13.9201 16.8 15.6001 16.8 15.6001" strokeLinecap="round" strokeLinejoin="round" /><path d="M9.60005 19.2C9.60005 19.2 10.56 18.24 12 18.24C13.44 18.24 14.4 19.2 14.4 19.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+const PowerIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
       <line x1="12" y1="2" x2="12" y2="12"></line>
     </svg>
 );
   
-const MicIcon: React.FC = () => (
-    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const MicIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
       <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-      <line x1="8" y1="23" x2="16" y2="23"></line>
-      <line x1="12" y1="17" x2="12" y2="23"></line>
     </svg>
 );
 
-// FIX: Defined HUDProps interface to resolve TypeScript error.
+
 interface HUDProps {
     isActive: boolean;
     status: string;
-    isExecutingPlan: boolean;
     error: string | null;
     toggleSystem: () => void;
     isConversing: boolean;
@@ -29,184 +29,184 @@ interface HUDProps {
     stopConversation: (maintainStatus?: boolean) => void;
     allDetectedObjects: DetectedObject[];
     selectedObject: DetectedObject | null;
-    onClearSelection: () => void;
-    executionLog: string[];
-    transcripts: TranscriptEntry[];
-    plan: PlanStep[] | null;
+    audioVisualizerData: Uint8Array | null;
 }
 
-const HudWidget: React.FC<{title: string, children: React.ReactNode, className?: string}> = ({ title, children, className }) => (
-    <div className={`bg-black/30 backdrop-blur-sm p-3 border border-cyan-400/30 rounded-md ${className}`}>
-        <h3 className="text-sm uppercase tracking-widest text-cyan-300/80 border-b border-cyan-400/20 pb-1 mb-2">{title}</h3>
-        {children}
+const StatusBar: React.FC<{ value: number; color: string; className?: string }> = ({ value, color, className }) => (
+    <div className={`w-32 h-3 border border-yellow-400/50 p-0.5 ${className}`}>
+        <div className={`${color} h-full`} style={{ width: `${value}%` }}></div>
     </div>
 );
 
+const AudioVisualizer: React.FC<{ data: Uint8Array | null, reversed?: boolean }> = ({ data, reversed = false }) => {
+    const barCount = 16;
+    const bars = Array.from({ length: barCount }, (_, i) => {
+        const dataIndex = Math.floor((i / barCount) * (data?.length || 0));
+        const height = data ? (data[dataIndex] / 255) * 100 : 0;
+        return (
+            <div key={i} className="w-1.5 bg-cyan-400/80 hud-element-glow-cyan" style={{ height: `${height}%`, transition: 'height 0.05s ease-out' }}></div>
+        );
+    });
+
+    return (
+        <div className={`flex w-32 h-10 items-end space-x-1 p-1 ${reversed ? 'flex-row-reverse' : ''}`}>
+            {bars}
+        </div>
+    );
+};
+
+
 export const HUD: React.FC<HUDProps> = (props) => {
-    const { isActive, status, isExecutingPlan, error, toggleSystem, isConversing, startConversation, stopConversation, allDetectedObjects, selectedObject, onClearSelection, executionLog, transcripts, plan } = props;
+    const { isActive, status, error, toggleSystem, isConversing, startConversation, stopConversation, allDetectedObjects, selectedObject, audioVisualizerData } = props;
     const radarCanvasRef = useRef<HTMLCanvasElement>(null);
-    const logContainerRef = useRef<HTMLDivElement>(null);
-    const transcriptContainerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        logContainerRef.current?.scrollTo({ top: logContainerRef.current.scrollHeight, behavior: 'smooth' });
-    }, [executionLog]);
-
-     useEffect(() => {
-        transcriptContainerRef.current?.scrollTo({ top: transcriptContainerRef.current.scrollHeight, behavior: 'smooth' });
-    }, [transcripts]);
 
     useEffect(() => {
         const canvas = radarCanvasRef.current;
         if (!canvas || !isActive) {
-            if (canvas) {
-                const ctx = canvas.getContext('2d');
-                ctx?.clearRect(0, 0, canvas.width, canvas.height);
-            }
+            if(canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
             return;
         }
 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-        
+
         let animationFrameId: number;
-        
-        const resizeCanvas = () => {
-            const size = Math.min(canvas.parentElement!.clientWidth, canvas.parentElement!.clientHeight);
-            canvas.width = size;
-            canvas.height = size;
-        };
-        resizeCanvas();
 
         const draw = () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const radius = canvas.width / 2 * 0.9;
             const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
-
+            const centerY = canvas.height * 0.9;
+            const radiusX = canvas.width * 0.45;
+            const radiusY = canvas.height * 0.8;
+            
             // Draw radar grid
-            ctx.strokeStyle = 'rgba(159, 234, 249, 0.2)';
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.3)';
             ctx.lineWidth = 1;
-            [0.25, 0.5, 0.75, 1].forEach(r => {
+            
+            // Arcs
+            for(let i=1; i<=4; i++) {
                 ctx.beginPath();
-                ctx.arc(centerX, centerY, radius * r, 0, 2 * Math.PI);
+                ctx.ellipse(centerX, centerY, radiusX * (i/4), radiusY * (i/4), 0, Math.PI, 2 * Math.PI);
                 ctx.stroke();
-            });
-
-            // Draw detected objects
-            allDetectedObjects.forEach(obj => {
-                const angle = (Math.atan2(obj.point[0] - 500, obj.point[1] - 500));
-                const distance = Math.min(1, Math.sqrt(Math.pow(obj.point[1] - 500, 2) + Math.pow(obj.point[0] - 500, 2)) / 707);
-                
-                const radarX = centerX + Math.cos(angle) * (distance * radius);
-                const radarY = centerY + Math.sin(angle) * (distance * radius);
-
-                const isSelected = selectedObject?.id === obj.id;
-
-                ctx.fillStyle = isSelected ? '#FFFF00' : 'rgba(255, 69, 0, 0.8)';
+            }
+            // Lines
+            for(let i=0; i<=4; i++) {
+                const angle = (i/4) * Math.PI;
                 ctx.beginPath();
-                ctx.arc(radarX, radarY, isSelected ? 5 : 3, 0, 2 * Math.PI);
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX + Math.cos(angle - Math.PI/2) * radiusX, centerY - Math.sin(angle - Math.PI/2) * radiusY);
+                ctx.stroke();
+            }
+
+            // Draw center dot
+            ctx.fillStyle = '#67E8F9';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 4, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.strokeStyle = '#0891B2';
+            ctx.stroke();
+
+            // Draw objects
+            allDetectedObjects.forEach(obj => {
+                const isSelected = selectedObject?.id === obj.id;
+                const angle = Math.atan2(500 - obj.point[0], obj.point[1] - 500) - Math.PI / 2;
+                const distance = Math.min(1, Math.sqrt(Math.pow(obj.point[1] - 500, 2) + Math.pow(obj.point[0] - 500, 2)) / 707);
+
+                const radarX = centerX + Math.sin(angle) * (distance * radiusX);
+                const radarY = centerY - Math.cos(angle) * (distance * radiusY);
+
+                ctx.fillStyle = isSelected ? '#FACC15' : '#EF4444'; // Yellow for selected, red for others
+                ctx.beginPath();
+                ctx.arc(radarX, radarY, isSelected ? 4 : 3, 0, 2 * Math.PI);
                 ctx.fill();
             });
+
 
             animationFrameId = requestAnimationFrame(draw);
         };
         draw();
         
-        return () => {
-            cancelAnimationFrame(animationFrameId);
-        }
+        return () => cancelAnimationFrame(animationFrameId);
 
     }, [isActive, allDetectedObjects, selectedObject]);
 
+
     return (
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {/* Borders and Frame */}
-            <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-black/70 to-transparent"></div>
-            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-black/70 to-transparent"></div>
-            <div className="absolute inset-0 border-[1.5rem] border-black rounded-[3rem]"></div>
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/3 h-2 bg-red-500/80 rounded-b-full shadow-[0_0_15px_rgba(255,0,0,0.7)]"></div>
+        <div className="absolute inset-2 pointer-events-none text-yellow-400 font-bold hud-text-glow uppercase">
+             {/* Header */}
+            <div className="absolute top-4 left-8 text-xs tracking-widest">eburon</div>
+            <div className="absolute top-4 right-8 text-xs tracking-widest">Maximus</div>
+
+            {/* Top-Left Widgets */}
+            <div className="absolute top-12 left-8 space-y-2">
+                <div className="flex items-center space-x-2">
+                    <HealthIcon className="text-red-500 hud-element-glow-red w-6 h-6"/>
+                    <StatusBar value={isActive ? 90: 0} color="bg-red-500"/>
+                </div>
+                 <div className="flex items-center space-x-2 pl-8">
+                     <StatusBar value={isActive ? 40 : 0} color="bg-cyan-400"/>
+                 </div>
+                 <p className="text-xs -mt-1 pl-8">REFLD</p>
+            </div>
+
+             {/* Top-Right Widgets */}
+            <div className="absolute top-12 right-8 space-y-2 flex flex-col items-end">
+                 <div className="flex items-center space-x-2">
+                    <StatusBar value={isActive ? (isConversing ? 100 : 75) : 0} color="bg-yellow-400"/>
+                    <SignalIcon className="w-6 h-6 hud-element-glow"/>
+                </div>
+                 <p className="text-xs">PARTY TEN SOMONIE</p>
+                 <p className={`text-xs h-4 font-medium ${error ? 'text-red-500' : 'text-yellow-400/80'}`}>{isActive ? status : 'SYSTEM OFFLINE'}</p>
+            </div>
             
-            {/* Central Reticle */}
-            <div className="absolute inset-0 flex items-center justify-center">
-                 <svg viewBox="0 0 500 500" className="w-[40vh] h-[40vh] text-orange-400 opacity-80" style={{filter: 'drop-shadow(0 0 10px currentColor)'}}>
-                    <circle cx="250" cy="250" r="150" fill="none" stroke="currentColor" strokeWidth="2" />
-                    <circle cx="250" cy="250" r="100" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="1 10"/>
-                    <line x1="250" y1="50" x2="250" y2="450" stroke="currentColor" strokeWidth="1"/>
-                    <line x1="50" y1="250" x2="450" y2="250" stroke="currentColor" strokeWidth="1"/>
-                    <line x1="230" y1="250" x2="270" y2="250" stroke="currentColor" strokeWidth="3"/>
-                    <line x1="250" y1="230" x2="250" y2="270" stroke="currentColor" strokeWidth="3"/>
+             {/* Center Reticle */}
+            <div className="absolute inset-0 flex items-center justify-center hud-element-glow">
+                <svg viewBox="0 0 200 200" className="w-80 h-80">
+                    <text x="92" y="18" fill="currentColor" fontSize="8">SUR</text>
+                    <path d="M 100 20 L 100 25" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M 180 100 L 175 100" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M 100 180 L 100 175" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M 20 100 L 25 100" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M 100 15 L 105 20 L 95 20 Z" fill="currentColor" />
+                    <path d="M 185 100 L 180 95 L 180 105 Z" fill="currentColor" />
+
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="currentColor" strokeWidth="2" className="animate-rotate-cw" />
+                    <circle cx="100" cy="100" r="40" fill="none" stroke="currentColor" strokeWidth="1" className="animate-rotate-ccw"/>
+                    <circle cx="100" cy="100" r="5" fill="currentColor" />
+                    
+                    <path d="M 100 32 L 100 98 M 100 102 L 100 168" stroke="currentColor" strokeWidth="0.5" />
+                    <path d="M 32 100 L 98 100 M 102 100 L 168 100" stroke="currentColor" strokeWidth="0.5" />
+                    
+                    <path d="M 95 100 L 105 100" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M 100 95 L 100 105" stroke="currentColor" strokeWidth="1.5" />
                 </svg>
             </div>
-
-            {/* Left Panel */}
-            <div className="absolute top-1/4 left-8 w-64 space-y-4">
-                 <h1 className="text-3xl font-bold tracking-[0.2em] hud-text-glow">HE4L300</h1>
-                 <div className="relative w-full h-4 bg-cyan-900/50 border border-cyan-400/50">
-                     <div className="h-full bg-cyan-400" style={{width: '85%'}}></div>
-                 </div>
-                 <div className="relative w-64 h-64">
-                    <canvas ref={radarCanvasRef} className="w-full h-full"></canvas>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-full h-1/2 bg-gradient-to-b from-cyan-400/20 to-transparent opacity-50 origin-center radar-sweep-line"></div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Right Panel */}
-            <div className="absolute top-1/4 right-8 w-72 space-y-4">
-                <div className="flex justify-end space-x-2 pointer-events-auto">
-                    {/* Placeholder Icons */}
-                    <div className="w-8 h-8 flex items-center justify-center border-2 border-cyan-400/50 bg-black/30 text-cyan-400/80">?</div>
-                    <button onClick={isConversing ? stopConversation : startConversation} disabled={!isActive} className={`w-8 h-8 flex items-center justify-center border-2 bg-black/30 transition-colors ${isConversing ? 'text-red-400 border-red-400/80 animate-pulse' : 'text-cyan-400 border-cyan-400/50'}`}><MicIcon/></button>
-                    <div className="w-8 h-8 flex items-center justify-center border-2 border-cyan-400/50 bg-black/30 text-cyan-400/80">#</div>
-                </div>
-
-                {selectedObject ? (
-                     <HudWidget title="TARGET DETAILS" className="pointer-events-auto">
-                        <p className="text-lg text-yellow-300 font-bold hud-text-glow">{selectedObject.label.toUpperCase()}</p>
-                        <p className="text-xs text-slate-400">COORDS: [{selectedObject.point[0]}, {selectedObject.point[1]}]</p>
-                        <button onClick={onClearSelection} className="mt-2 w-full text-xs text-center py-1 bg-yellow-800/50 border border-yellow-400/50 hover:bg-yellow-700/70 text-yellow-300">
-                            CLEAR LOCK
-                        </button>
-                    </HudWidget>
-                ) : (
-                    <HudWidget title="SYSTEM STATUS">
-                        <p className="text-lg font-bold">{status}</p>
-                         <div className="flex items-center space-x-2 mt-1">
-                            <span className={`w-3 h-3 rounded-full animate-pulse ${isActive ? (isExecutingPlan ? 'bg-yellow-400 shadow-[0_0_8px_yellow]' : 'bg-green-400 shadow-[0_0_8px_green]') : 'bg-red-500 shadow-[0_0_8px_red]'}`}></span>
-                            <span className="text-xs uppercase tracking-widest">{isExecutingPlan ? 'EXECUTING' : (isActive ? 'NOMINAL' : 'OFFLINE')}</span>
-                        </div>
-                    </HudWidget>
-                )}
-
-                <HudWidget title="EXECUTION LOG">
-                    <div ref={logContainerRef} className="text-xs h-24 overflow-y-auto pr-2 space-y-1 font-mono">
-                        {executionLog.length > 0 ? executionLog.map((log, i) => (
-                            <p key={i}>{log}</p>
-                        )) : <p className="text-slate-500">Awaiting commands...</p>}
-                    </div>
-                </HudWidget>
-
-                <HudWidget title="AUDIO TRANSCRIPT">
-                    <div ref={transcriptContainerRef} className="text-xs h-24 overflow-y-auto pr-2 space-y-2">
-                         {transcripts.length > 0 ? transcripts.map((entry, index) => (
-                            <p key={index}><span className={`font-bold ${entry.speaker === 'user' ? 'text-cyan-300' : 'text-slate-300'}`}>{entry.speaker === 'user' ? 'OPR' : 'EBU'}:</span> {entry.text}</p>
-                        )) : <p className="text-slate-500">No active comms...</p>}
-                    </div>
-                </HudWidget>
-            </div>
-
-            {/* Bottom Gauges and Controls */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center">
-                 <div className="relative w-80 h-4 bg-cyan-900/50 border border-cyan-400/50">
-                     <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-200" style={{width: '60%'}}></div>
-                 </div>
+            
+            {/* Bottom-Left Visualizer */}
+            <div className="absolute bottom-12 left-8">
+                <AudioVisualizer data={audioVisualizerData} />
             </div>
             
-            <button onClick={toggleSystem} className={`absolute bottom-8 right-8 w-14 h-14 flex items-center justify-center rounded-full border-2 transition-all duration-300 pointer-events-auto ${isActive ? 'text-red-400 border-red-500/80 bg-red-900/50 hover:bg-red-800/50 hud-text-glow-orange' : 'text-cyan-300 border-cyan-400/80 bg-cyan-900/50 hover:bg-cyan-800/50 hud-text-glow'}`}>
-                <PowerIcon />
-            </button>
+            {/* Bottom-Right Controls & Visualizer */}
+            <div className="absolute bottom-12 right-8 flex flex-col items-end">
+                <AudioVisualizer data={audioVisualizerData} reversed={true} />
+                <div className="space-y-3 mt-2 pointer-events-auto">
+                    <button onClick={isConversing ? () => stopConversation() : startConversation} disabled={!isActive} className={`flex items-center space-x-2 p-1 transition-opacity ${!isActive && 'opacity-50'}`}>
+                        <MicIcon className={`w-5 h-5 ${isConversing ? 'text-red-400 animate-pulse' : ''}`}/>
+                        <div className="w-32 h-3" />
+                    </button>
+                    <button onClick={toggleSystem} className={`flex items-center space-x-2 p-1 transition-colors ${isActive ? 'text-red-500' : 'text-cyan-400'}`}>
+                        <PowerIcon className="w-6 h-6"/>
+                        <div className="w-32 h-3" />
+                    </button>
+                </div>
+            </div>
+
+             {/* Bottom Radar */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-80 h-40 hud-element-glow">
+                <canvas ref={radarCanvasRef} width="320" height="160"></canvas>
+            </div>
+
         </div>
     );
 };
