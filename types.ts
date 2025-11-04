@@ -19,3 +19,8 @@ export interface TranscriptEntry {
   speaker: 'user' | 'eburon';
   text: string;
 }
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+}

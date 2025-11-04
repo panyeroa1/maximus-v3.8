@@ -103,10 +103,23 @@ export const getCommandPlan = async (command: string, context: { sceneObjects: D
     ${ocrTextContext || 'None detected.'}
 
     ## Task:
-    Based on the command and context, create a step-by-step plan using the available functions.
-    First, provide your reasoning. Then, provide the plan as a JSON object with a "plan" key containing an array of function calls.
+    Based on the command and context, create a step-by-step plan using the available functions. Your plan must be logical and physically plausible for a robot arm. When moving an object to a destination, you must find the coordinates for both the object and the destination from the 'Other objects in the scene' context.
+
+    **Example Logic for a "pick and place" task:**
+    1.  **Approach:** Move the gripper high above the target object.
+    2.  **Prepare:** Open the gripper.
+    3.  **Grasp:** Move the gripper down to the object.
+    4.  **Secure:** Close the gripper.
+    5.  **Lift:** Move the gripper up to a safe height.
+    6.  **Transport:** Move the gripper high above the destination.
+    7.  **Place:** Move the gripper down to the destination.
+    8.  **Release:** Open the gripper.
+    9.  **Retreat:** Move the gripper back up.
+    10. **Reset:** Use 'returnToOrigin()' after the task is complete.
+
+    First, provide your detailed reasoning for the specific command, including which objects and coordinates you are using. Then, provide the final plan as a JSON object with a "plan" key containing an array of function calls.
     Each function call object must have "function" (string) and "args" (array of arguments).
-    If the command is unclear or cannot be executed, return an empty plan and explain why in the reasoning.
+    If the command is unclear, requires information not present in the context (e.g., location of an unseen object), or is impossible, return an empty plan and clearly explain why in the reasoning.
   `;
 
   try {

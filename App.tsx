@@ -2,8 +2,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { EburonVision } from './components/EburonVision';
 import { HUD } from './components/HUD';
 import { Initializer } from './components/Initializer';
-import { DetectedObject, OcrResult } from './types';
+import { DetectedObject, OcrResult, ChatMessage } from './types';
 import { getCommandPlan, executePlan, decode, decodeAudioData, encode } from './services/geminiService';
+import { loadHistory, saveHistory } from './services/firebaseService';
 import { preGeneratedAudio } from './services/preGeneratedAudio';
 import { audioManager } from './services/audioManager';
 // FIX: The LiveSession type is not exported from '@google/genai'.
@@ -36,11 +37,48 @@ const App: React.FC = () => {
   const currentInputTranscription = useRef('');
   const currentOutputTranscription = useRef('');
   const liveFrameIntervalRef = useRef<number | null>(null);
+  const [history, setHistory] = useState<ChatMessage[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
 
   // Audio Visualizer State
   const [audioVisualizerData, setAudioVisualizerData] = useState<Uint8Array | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const visualizerFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Ensure unique device identity
+    let deviceId = localStorage.getItem('eburon_deviceId');
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      localStorage.setItem('eburon_deviceId', deviceId);
+    }
+
+    const fetchHistory = async () => {
+        if (deviceId) {
+            const savedHistory = await loadHistory(deviceId);
+            if (savedHistory) {
+                setHistory(savedHistory);
+            }
+        }
+        setIsLoadingHistory(false);
+    };
+    
+    fetchHistory();
+  }, []); // Runs once on mount
+
+  useEffect(() => {
+    // Don't save anything until the initial history has been loaded.
+    if (isLoadingHistory) {
+        return;
+    }
+
+    const deviceId = localStorage.getItem('eburon_deviceId');
+    if (deviceId) {
+        saveHistory(deviceId, history).catch(e => {
+            console.error("Failed to save chat history to Firebase Storage", e);
+        });
+    }
+  }, [history, isLoadingHistory]);
 
   const playSynthesizedAudio = useCallback(async (base64Audio: string) => {
     const ctx = audioManager.getTTSContext();
@@ -199,83 +237,8 @@ const App: React.FC = () => {
         return { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
       }
 
-      sessionPromiseRef.current = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-        callbacks: {
-          onopen: () => {
-            const source = inputAudioContext.createMediaStreamSource(stream);
-            mediaStreamSourceRef.current = source;
-            const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-            scriptProcessorRef.current = scriptProcessor;
-
-            scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-              const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-              const pcmBlob = createBlob(inputData);
-              sessionPromiseRef.current?.then((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              });
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioContext.destination);
-
-            // Setup Analyser for visualization
-            const analyser = inputAudioContext.createAnalyser();
-            analyser.fftSize = 64;
-            analyser.smoothingTimeConstant = 0.8;
-            analyserRef.current = analyser;
-            source.connect(analyser);
-
-            const visualizerLoop = () => {
-              if (analyserRef.current) {
-                const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-                analyserRef.current.getByteFrequencyData(dataArray);
-                setAudioVisualizerData(dataArray);
-                visualizerFrameRef.current = requestAnimationFrame(visualizerLoop);
-              }
-            };
-            visualizerLoop();
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.outputTranscription) currentOutputTranscription.current += message.serverContent.outputTranscription.text;
-            if (message.serverContent?.inputTranscription) currentInputTranscription.current += message.serverContent.inputTranscription.text;
-            if (message.serverContent?.turnComplete) {
-                const finalInput = currentInputTranscription.current.trim();
-                // No need to display transcript, just process command
-                if(finalInput) processCommand(finalInput);
-                currentInputTranscription.current = '';
-                currentOutputTranscription.current = '';
-            }
-
-            const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (base64Audio) {
-              if (!outputAudioContext) return;
-              
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioContext.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContext, 24000, 1);
-              const source = outputAudioContext.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputAudioContext.destination);
-              source.addEventListener('ended', () => audioSourcesRef.current.delete(source));
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              audioSourcesRef.current.add(source);
-            }
-          },
-          onerror: (e: ErrorEvent) => {
-            console.error('Live session error:', e);
-            setError(`Live conversation error: ${e.message}`);
-            stopConversation();
-          },
-          onclose: () => {
-            if (isConversing) stopConversation();
-          },
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } } },
-          systemInstruction: `# ⚙️ SYSTEM PROMPT — MAXIMUS, THE EBURON HUMANOID
+      const getSystemInstructionWithHistory = (currentHistory: ChatMessage[]): string => {
+            const basePrompt = `# ⚙️ SYSTEM PROMPT — MAXIMUS, THE EBURON HUMANOID
 # Mode: Engineering + Humanoid Command Hybrid
 # Purpose: Operate as Eburon’s autonomous intelligence for both code execution and humanoid orchestration.
 
@@ -360,7 +323,106 @@ FAILSAFE_DIRECTIVES:
 ---
 
 TERMINATION_PHRASE:
-  - “Command acknowledged, my lord. Returning to standby until the next directive.”`,
+  - “Command acknowledged, my lord. Returning to standby until the next directive.”`;
+
+            if (currentHistory.length === 0) {
+                return basePrompt;
+            }
+
+            const historyString = currentHistory.map(msg => {
+                const speaker = msg.role === 'user' ? 'Master E (USER)' : 'MAXIMUS (MODEL)';
+                return `${speaker}:\n${msg.parts[0].text}`;
+            }).join('\n\n');
+
+            return `${basePrompt}\n\n---\n# PREVIOUS CONVERSATION HISTORY\n# This is a transcript of your prior interactions. Use it to maintain context.\n${historyString}\n---`;
+        };
+
+      const systemInstruction = getSystemInstructionWithHistory(history);
+
+      sessionPromiseRef.current = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        callbacks: {
+          onopen: () => {
+            const source = inputAudioContext.createMediaStreamSource(stream);
+            mediaStreamSourceRef.current = source;
+            const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
+            scriptProcessorRef.current = scriptProcessor;
+
+            scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+              const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+              const pcmBlob = createBlob(inputData);
+              sessionPromiseRef.current?.then((session) => {
+                session.sendRealtimeInput({ media: pcmBlob });
+              });
+            };
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(inputAudioContext.destination);
+
+            // Setup Analyser for visualization
+            const analyser = inputAudioContext.createAnalyser();
+            analyser.fftSize = 64;
+            analyser.smoothingTimeConstant = 0.8;
+            analyserRef.current = analyser;
+            source.connect(analyser);
+
+            const visualizerLoop = () => {
+              if (analyserRef.current) {
+                const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+                analyserRef.current.getByteFrequencyData(dataArray);
+                setAudioVisualizerData(dataArray);
+                visualizerFrameRef.current = requestAnimationFrame(visualizerLoop);
+              }
+            };
+            visualizerLoop();
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            if (message.serverContent?.outputTranscription) currentOutputTranscription.current += message.serverContent.outputTranscription.text;
+            if (message.serverContent?.inputTranscription) currentInputTranscription.current += message.serverContent.inputTranscription.text;
+            if (message.serverContent?.turnComplete) {
+                const finalInput = currentInputTranscription.current.trim();
+                const finalOutput = currentOutputTranscription.current.trim();
+                
+                if(finalInput) {
+                    const userMessage: ChatMessage = { role: 'user', parts: [{ text: finalInput }] };
+                    const modelMessage: ChatMessage = { role: 'model', parts: [{ text: finalOutput }] };
+                    setHistory(prev => [...prev, userMessage, modelMessage]);
+                    processCommand(finalInput);
+                }
+                
+                currentInputTranscription.current = '';
+                currentOutputTranscription.current = '';
+            }
+
+            const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (base64Audio) {
+              if (!outputAudioContext) return;
+              
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioContext.currentTime);
+              const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContext, 24000, 1);
+              const source = outputAudioContext.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(outputAudioContext.destination);
+              source.addEventListener('ended', () => audioSourcesRef.current.delete(source));
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += audioBuffer.duration;
+              audioSourcesRef.current.add(source);
+            }
+          },
+          onerror: (e: ErrorEvent) => {
+            console.error('Live session error:', e);
+            setError(`Live conversation error: ${e.message}`);
+            stopConversation();
+          },
+          onclose: () => {
+            if (isConversing) stopConversation();
+          },
+        },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } } },
+          systemInstruction: systemInstruction,
         },
       });
 
@@ -392,7 +454,7 @@ TERMINATION_PHRASE:
       setError('Failed to start conversation. Please check microphone permissions.');
       stopConversation();
     }
-  }, [isConversing, setStatus, setError, stopConversation, processCommand, videoRef]);
+  }, [isConversing, setStatus, setError, stopConversation, processCommand, videoRef, history]);
 
   useEffect(() => {
     if(error) speak('error');
@@ -422,6 +484,7 @@ TERMINATION_PHRASE:
         allDetectedObjects={allDetectedObjects}
         selectedObject={selectedObject}
         audioVisualizerData={audioVisualizerData}
+        isLoadingHistory={isLoadingHistory}
       />
     </div>
   );
