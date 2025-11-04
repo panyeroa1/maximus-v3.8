@@ -12,6 +12,7 @@
     "@google/genai": "^1.28.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "@supabase/supabase-js": "^2.44.0",
     "firebase": "^12.5.0"
   },
   "devDependencies": {
