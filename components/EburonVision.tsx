@@ -115,37 +115,6 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
     return () => stopStreams();
   }, [isActive, startVisionSystem, stopStreams]);
 
-  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const clickY = event.clientY - rect.top;
-
-    const CLICK_THRESHOLD = 20; // pixels
-
-    // Find the closest object to the click
-    let closestObject: DetectedObject | null = null;
-    let minDistance = Infinity;
-
-    for (const obj of detectedObjects) {
-      const [y, x] = obj.point;
-      const canvasX = (x / 1000) * canvas.width;
-      const canvasY = (y / 1000) * canvas.height;
-      const distance = Math.sqrt(Math.pow(clickX - canvasX, 2) + Math.pow(clickY - canvasY, 2));
-
-      if (distance < CLICK_THRESHOLD && distance < minDistance) {
-        closestObject = obj;
-        minDistance = distance;
-      }
-    }
-    
-    if (closestObject) {
-        onObjectSelected(closestObject);
-    }
-  };
-
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -183,7 +152,7 @@ export const EburonVision: React.FC<EburonVisionProps> = ({ isActive, setStatus,
         playsInline
         muted
       />
-      <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full cursor-pointer" onClick={handleCanvasClick} />
+      <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
     </div>
   );
 };

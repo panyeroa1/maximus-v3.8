@@ -1,5 +1,5 @@
-import React from 'react';
-import { DetectedObject } from '../types';
+import React, { useEffect, useState } from 'react';
+import { DetectedObject, RobotState } from '../types';
 
 // New, more detailed SVG components based on the reference image
 const ScannerWidget: React.FC<{className?: string}> = ({className}) => (
@@ -28,9 +28,9 @@ const PowerIcon: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
   
-const MicIcon: React.FC<{ className?: string }> = ({ className }) => (
+const MicIcon: React.FC<{ className?: string, isConversing: boolean }> = ({ className, isConversing }) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" className={isConversing ? 'text-red-400 animate-pulse' : ''}></path>
       <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
     </svg>
 );
@@ -40,14 +40,13 @@ interface HUDProps {
     isActive: boolean;
     status: string;
     error: string | null;
-    toggleSystem: () => void;
     isConversing: boolean;
-    startConversation: () => void;
-    stopConversation: (maintainStatus?: boolean) => void;
     allDetectedObjects: DetectedObject[];
     selectedObject: DetectedObject | null;
     audioVisualizerData: Uint8Array | null;
-    isLoadingHistory: boolean;
+    robotState: RobotState;
+    isExecutingAction: boolean;
+    interactionFeedback: { message: string; timestamp: number } | null;
 }
 
 const HorizontalBar: React.FC<{ value: number; className?: string }> = ({ value, className }) => (
@@ -56,62 +55,91 @@ const HorizontalBar: React.FC<{ value: number; className?: string }> = ({ value,
     </div>
 );
 
-const PowerLevelsWidget: React.FC<{className?: string}> = ({className}) => {
-    const redLevels = [100, 100, 100, 100, 100, 100, 100, 100, 80, 50, 0, 0];
-    const cyanLevels = [100, 100, 100, 100, 90, 40];
-    return (
-        <div className={`w-48 space-y-2 ${className}`}>
-             <div className="flex space-x-1">
-                {redLevels.map((level, i) => (
-                    <div key={i} className="flex-1 h-3 bg-red-500/20"><div className="bg-red-500 h-full" style={{width: `${level}%`}}></div></div>
-                ))}
-             </div>
-             <div className="flex space-x-1">
-                {cyanLevels.map((level, i) => (
-                    <div key={i} className="flex-1 h-2 bg-cyan-400/20"><div className="bg-cyan-400 h-full" style={{width: `${level}%`}}></div></div>
-                ))}
-             </div>
-             <div className="w-full h-1 bg-red-500"></div>
-        </div>
-    )
-};
-
-
-const AudioVisualizer: React.FC<{ data: Uint8Array | null }> = ({ data }) => {
-    const barCount = 10;
+const AudioVisualizer: React.FC<{ data: Uint8Array | null, barCount: number }> = ({ data, barCount }) => {
     const bars = Array.from({ length: barCount }, (_, i) => {
         const dataIndex = Math.floor((i / barCount) * (data?.length || 0));
         const height = data ? (data[dataIndex] / 255) * 100 : 0;
         return (
-            <div key={i} className="w-2 bg-yellow-400/80 hud-element-glow" style={{ height: `${height}%`, transition: 'height 0.05s ease-out' }}></div>
+            <div key={i} className="w-1 bg-yellow-400/80" style={{ height: `${height}%`, transition: 'height 0.05s ease-out' }}></div>
         );
     });
 
     return (
-        <div className="flex w-40 h-16 items-end space-x-1 p-1 border border-yellow-400/30">
+        <div className="flex h-4 items-end space-x-0.5">
             {bars}
         </div>
     );
 };
 
+const TargetInfoWidget: React.FC<{ selectedObject: DetectedObject | null; interactionFeedback: { message: string; timestamp: number } | null }> = ({ selectedObject, interactionFeedback }) => {
+    const [feedback, setFeedback] = useState<{ message: string } | null>(null);
+
+    useEffect(() => {
+        if (interactionFeedback) {
+            setFeedback({ message: interactionFeedback.message });
+            const timer = setTimeout(() => setFeedback(null), 3000); // Display for 3 seconds
+            return () => clearTimeout(timer);
+        }
+    }, [interactionFeedback]);
+
+    if (!selectedObject) return null;
+
+    return (
+        <div className="w-64 p-2 border border-cyan-400/50 bg-cyan-900/20 text-cyan-300 hud-element-glow-cyan text-xs uppercase tracking-widest">
+            <h3 className="text-sm font-bold border-b border-cyan-400/50 pb-1 mb-1">Target Locked</h3>
+            <p className="truncate"><span className="font-bold text-white/80 w-20 inline-block">Label:</span> {selectedObject.label}</p>
+            <p><span className="font-bold text-white/80 w-20 inline-block">Coord Y:</span> {selectedObject.point[0].toFixed(2)}</p>
+            <p><span className="font-bold text-white/80 w-20 inline-block">Coord X:</span> {selectedObject.point[1].toFixed(2)}</p>
+            {feedback && (
+                 <div className="mt-2 pt-2 border-t border-cyan-400/30 text-yellow-400 animate-pulse">
+                    <p>{feedback.message}</p>
+                </div>
+            )}
+        </div>
+    )
+};
+
+const RobotStateWidget: React.FC<{ state: RobotState; isExecutingAction: boolean; }> = ({ state, isExecutingAction }) => (
+    <div className="w-64 p-2 border border-yellow-400/50 bg-yellow-900/20 text-yellow-300 hud-element-glow text-xs uppercase tracking-widest">
+        <h3 className="text-sm font-bold border-b border-yellow-400/50 pb-1 mb-1">Robot Status</h3>
+        <p><span className="font-bold text-white/80 w-28 inline-block">Gait:</span> {state.gaitType}</p>
+        <p><span className="font-bold text-white/80 w-28 inline-block">Body Height:</span> {state.bodyHeight.toFixed(2)}</p>
+        <div className="mt-2 pt-2 border-t border-yellow-400/30">
+            {isExecutingAction && (
+                <p className="text-cyan-400 animate-pulse mb-1"><span className="font-bold text-white/80 w-28 inline-block">Action:</span> EXECUTING...</p>
+            )}
+            <p><span className="font-bold text-white/80 w-28 inline-block">Fwd Speed:</span> {state.forwardSpeed.toFixed(2)}</p>
+            <p><span className="font-bold text-white/80 w-28 inline-block">Side Speed:</span> {state.sideSpeed.toFixed(2)}</p>
+            <p><span className="font-bold text-white/80 w-28 inline-block">Rotate Speed:</span> {state.rotateSpeed.toFixed(2)}</p>
+        </div>
+    </div>
+);
+
+
+const TelemetryWidget: React.FC<{isActive: boolean}> = ({ isActive }) => (
+    <div className="w-56 text-right text-xs uppercase tracking-widest text-shadow-strong">
+        <p><span className="font-bold text-red-400">Core Temp:</span> {isActive ? '72.5 C' : '--'}</p>
+        <p><span className="font-bold text-yellow-400">Power:</span> {isActive ? '98.2 %' : '--'}</p>
+        <p><span className="font-bold text-cyan-400">Link:</span> {isActive ? '99.9 %' : 'DISCONNECTED'}</p>
+    </div>
+);
 
 export const HUD: React.FC<HUDProps> = (props) => {
-    const { isActive, status, error, toggleSystem, isConversing, startConversation, stopConversation, audioVisualizerData, isLoadingHistory } = props;
+    const { isActive, status, error, isConversing, selectedObject, audioVisualizerData, robotState, isExecutingAction, interactionFeedback } = props;
     const statusText = isActive ? status : 'SYSTEM OFFLINE';
 
     return (
         <div className="absolute inset-2 pointer-events-none text-white/90 font-bold uppercase">
              {/* Header */}
             <div className="absolute top-4 left-8 text-[10px] tracking-widest text-shadow-strong">eburon</div>
-            <div className="absolute top-4 right-8 flex items-center space-x-2">
+            <div className="absolute top-4 right-8 flex items-center space-x-4">
+                 <div className="flex items-center space-x-2">
+                    <AudioVisualizer data={audioVisualizerData} barCount={16} />
+                    <div className="p-1.5 bg-black/50 rounded-full">
+                        <MicIcon className="w-4 h-4 text-white/80" isConversing={isConversing}/>
+                    </div>
+                 </div>
                 <span className="text-[10px] tracking-widest text-shadow-strong">Maximus</span>
-                 <button 
-                    onClick={isConversing ? () => stopConversation() : startConversation} 
-                    disabled={!isActive || isLoadingHistory} 
-                    className={`pointer-events-auto transition-opacity disabled:opacity-50 disabled:cursor-not-allowed ${isConversing ? 'text-red-400 animate-pulse' : 'text-white/80 hover:text-white'}`}
-                >
-                    <MicIcon className="w-4 h-4"/>
-                </button>
             </div>
 
             {/* Top-Left Widgets */}
@@ -133,22 +161,14 @@ export const HUD: React.FC<HUDProps> = (props) => {
                 >
                     {statusText}
                 </p>
-                {isActive && (
-                    <button 
-                        onClick={toggleSystem} 
-                        className="pointer-events-auto mt-2 px-2 py-1 border border-red-500/50 bg-red-500/20 text-red-400 text-[10px] tracking-widest hover:bg-red-500/40 hover:text-white transition-all hud-element-glow-red"
-                    >
-                        TURN OFF
-                    </button>
-                )}
             </div>
             
              {/* Center Reticle */}
             <div className="absolute inset-0 flex items-center justify-center text-white/90">
                  {!isActive ? (
-                    <button onClick={toggleSystem} className="pointer-events-auto text-cyan-400 hud-element-glow-cyan transition-all hover:scale-110 focus:scale-110 outline-none">
+                     <div className="text-cyan-400 hud-element-glow-cyan">
                         <PowerIcon className="w-24 h-24" />
-                    </button>
+                     </div>
                 ) : (
                     <div className="hud-element-glow">
                         <svg viewBox="0 0 200 200" className="w-96 h-96">
@@ -180,21 +200,11 @@ export const HUD: React.FC<HUDProps> = (props) => {
             
              {/* Bottom Section */}
              <div className="absolute bottom-6 left-8 right-8 flex justify-between items-end">
-                {/* Left Power Levels */}
-                <div className="hud-element-glow-red">
-                    <PowerLevelsWidget />
-                </div>
-
-                {/* Right Controls & Visualizer */}
                 <div className="flex items-end space-x-4">
-                    <div className="flex flex-col items-center text-yellow-400">
-                        <AudioVisualizer data={audioVisualizerData} />
-                        <div className="flex w-full justify-between items-center mt-1 text-xs text-shadow-strong">
-                           <span>+</span>
-                           <svg viewBox="0 0 20 20" className="w-3 h-3" fill="currentColor"><path d="M2 3a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H3a1 1 0 01-1-1V3z"></path></svg>
-                        </div>
-                    </div>
+                   <TargetInfoWidget selectedObject={selectedObject} interactionFeedback={interactionFeedback} />
+                   {isActive && <RobotStateWidget state={robotState} isExecutingAction={isExecutingAction} />}
                 </div>
+                <TelemetryWidget isActive={isActive}/>
              </div>
         </div>
     );

@@ -20,7 +20,10 @@ export interface TranscriptEntry {
   text: string;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'model';
-  parts: { text: string }[];
+export interface RobotState {
+  bodyHeight: number; // 0.0 to 1.0
+  gaitType: 'trot' | 'walk' | 'run' | 'stand';
+  forwardSpeed: number; // -1.0 to 1.0
+  sideSpeed: number; // -1.0 to 1.0
+  rotateSpeed: number; // -1.0 to 1.0
 }

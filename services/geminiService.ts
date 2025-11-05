@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { DetectedObject, PlanStep, OcrResult } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
+import { DetectedObject, PlanStep, OcrResult, RobotState } from '../types';
 
 if (!process.env.API_KEY) {
   throw new Error("API_KEY environment variable not set");
@@ -87,39 +87,36 @@ export const getCommandPlan = async (command: string, context: { sceneObjects: D
   const ocrTextContext = context.ocrData.map(o => `- "${o.text}"`).join('\n');
 
   const prompt = `
-    You are the "brain" of the Eburon robot. You receive a command from an operator and must convert it into a sequence of actions.
+    You are the "brain" of the Eburon humanoid robot. You receive a voice command from the operator and must convert it into a sequence of executable actions.
 
     ## Available Functions:
-    - move(x: number, y: number, high: boolean): Moves the arm to normalized coordinates. 'high' avoids obstacles.
-    - setGripperState(opened: boolean): true to open gripper, false to close.
-    - returnToOrigin(): Returns the robot to a safe, neutral pose.
+    - move(forwardSpeed: number, sideSpeed: number, rotateSpeed: number, duration_seconds: number): Controls movement. Speeds are floats from -1.0 (max backward/left/counter-clockwise) to 1.0 (max forward/right/clockwise). duration_seconds is how long to apply the movement.
+    - set_posture(bodyHeight: number, footRaiseHeight: number, gaitType: "trot" | "walk" | "run" | "stand"): Adjusts the robot's stance. bodyHeight and footRaiseHeight are from 0.0 (low) to 1.0 (high).
+    - perform_action(action: "stand_up" | "stand_down" | "jump" | "dance" | "wave"): Executes a pre-programmed complex action.
+    - look_at(target_label: string): Directs the robot's visual sensors towards a specified object from the scene context.
+    - interact_with_object(action: "pick_up" | "place", target_label: string, destination_label?: string): Manages manipulation. For 'place', 'destination_label' is required.
+    - speak(message: string): Uses text-to-speech to communicate.
+    - wait(duration_seconds: number): Pauses execution.
 
     ## Context:
     - Operator Command: "${command}"
-    ${context.selectedObject ? `- The command specifically targets: "${context.selectedObject.label}" at [y:${context.selectedObject.point[0]}, x:${context.selectedObject.point[1]}].` : ''}
-    - Other objects in the scene:
+    ${context.selectedObject ? `- The command specifically targets: "${context.selectedObject.label}" at [y:${context.selectedObject.point[0]}, x:${context.selectedObject.point[1]}]. You should prioritize this object.` : ''}
+    - Objects in the scene:
     ${availableObjects || 'None detected.'}
     - Readable text in the scene:
     ${ocrTextContext || 'None detected.'}
 
     ## Task:
-    Based on the command and context, create a step-by-step plan using the available functions. Your plan must be logical and physically plausible for a robot arm. When moving an object to a destination, you must find the coordinates for both the object and the destination from the 'Other objects in the scene' context.
+    Based on the command and context, create a step-by-step plan using the available functions. Your plan must be logical and physically plausible.
+    You MUST find the exact object labels from the context to use as arguments for functions like 'look_at' and 'interact_with_object'. Do not invent object names.
 
-    **Example Logic for a "pick and place" task:**
-    1.  **Approach:** Move the gripper high above the target object.
-    2.  **Prepare:** Open the gripper.
-    3.  **Grasp:** Move the gripper down to the object.
-    4.  **Secure:** Close the gripper.
-    5.  **Lift:** Move the gripper up to a safe height.
-    6.  **Transport:** Move the gripper high above the destination.
-    7.  **Place:** Move the gripper down to the destination.
-    8.  **Release:** Open the gripper.
-    9.  **Retreat:** Move the gripper back up.
-    10. **Reset:** Use 'returnToOrigin()' after the task is complete.
+    **Example Logic for "walk forward for 2 seconds":**
+    1.  **Acknowledge:** Use 'speak' to confirm.
+    2.  **Move:** Use 'move' with forwardSpeed: 0.5, other speeds 0, duration 2.
 
-    First, provide your detailed reasoning for the specific command, including which objects and coordinates you are using. Then, provide the final plan as a JSON object with a "plan" key containing an array of function calls.
+    First, provide your detailed reasoning for the plan. Then, provide the final plan as a JSON object with a "plan" key containing an array of function calls.
     Each function call object must have "function" (string) and "args" (array of arguments).
-    If the command is unclear, requires information not present in the context (e.g., location of an unseen object), or is impossible, return an empty plan and clearly explain why in the reasoning.
+    If the command is unclear, requires information not present in the context, or is impossible, return an empty plan and clearly explain why in the reasoning.
   `;
 
   try {
@@ -166,17 +163,47 @@ export const getCommandPlan = async (command: string, context: { sceneObjects: D
 };
 
 
-export async function* executePlan(plan: PlanStep[]): AsyncGenerator<string> {
-  yield "Executing plan...";
-  await new Promise(resolve => setTimeout(resolve, 500));
-  for (const step of plan) {
-    const argsString = step.args.join(', ');
-    const logMessage = `Executing: ${step.function}(${argsString})`;
-    yield logMessage;
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  yield "Plan execution complete.";
-}
+// Simulated Robot Control Functions
+const simulateDelay = (duration_seconds: number) => new Promise(resolve => setTimeout(resolve, duration_seconds * 1000));
+
+export const move = async (
+  currentState: RobotState,
+  setState: (state: React.SetStateAction<RobotState>) => void,
+  forwardSpeed: number,
+  sideSpeed: number,
+  rotateSpeed: number,
+  duration_seconds: number
+): Promise<void> => {
+  setState({ ...currentState, forwardSpeed, sideSpeed, rotateSpeed });
+  await simulateDelay(duration_seconds);
+  // After movement duration, reset speeds to 0 and revert to stand gait
+  setState(prevState => ({ ...prevState, forwardSpeed: 0, sideSpeed: 0, rotateSpeed: 0, gaitType: 'stand' }));
+};
+
+export const set_posture = async (
+  currentState: RobotState,
+  setState: (state: React.SetStateAction<RobotState>) => void,
+  bodyHeight: number,
+  footRaiseHeight: number, // Note: footRaiseHeight is just for the command, not stored in state
+  gaitType: 'trot' | 'walk' | 'run' | 'stand'
+): Promise<void> => {
+  setState({ ...currentState, bodyHeight, gaitType });
+  await simulateDelay(1.5); // Posture change takes time
+};
+
+export const perform_action = async (action: string): Promise<void> => {
+  const duration = action === 'dance' ? 5 : 2.5;
+  await simulateDelay(duration);
+};
+
+export const interact_with_object = async (action: string, target_label: string): Promise<void> => {
+  await simulateDelay(3); // Interaction takes time
+};
+
+export const wait = async (duration_seconds: number): Promise<void> => {
+  await simulateDelay(duration_seconds);
+};
+
 
 // Audio utility functions for Gemini Live API
 export const encode = (bytes: Uint8Array): string => {
