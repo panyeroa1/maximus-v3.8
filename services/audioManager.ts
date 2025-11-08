@@ -62,19 +62,38 @@ class AudioManager {
         const ctx = this.getSFXContext();
         if (!ctx) return;
     
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
+        const now = ctx.currentTime;
+        const duration = 0.3;
 
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(1200, ctx.currentTime);
-        gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+        // Main sound - a quick downward sweep
+        const mainOsc = ctx.createOscillator();
+        mainOsc.type = 'sine';
+        mainOsc.frequency.setValueAtTime(880, now); // Start high (A5)
+        mainOsc.frequency.exponentialRampToValueAtTime(440, now + duration * 0.7); // End at A4
 
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.25);
+        // Texture sound - a low buzz
+        const textureOsc = ctx.createOscillator();
+        textureOsc.type = 'sawtooth';
+        textureOsc.frequency.setValueAtTime(120, now);
+
+        const mainGain = ctx.createGain();
+        mainGain.gain.setValueAtTime(0.2, now); // Start at a decent volume
+        mainGain.gain.exponentialRampToValueAtTime(0.0001, now + duration); // Fade out quickly
+
+        const textureGain = ctx.createGain();
+        textureGain.gain.setValueAtTime(0.02, now); // Texture is subtle
+        textureGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+        // Routing
+        mainOsc.connect(mainGain);
+        textureOsc.connect(textureGain);
+        mainGain.connect(ctx.destination);
+        textureGain.connect(ctx.destination);
+
+        mainOsc.start(now);
+        textureOsc.start(now);
+        mainOsc.stop(now + duration);
+        textureOsc.stop(now + duration);
     };
 
 

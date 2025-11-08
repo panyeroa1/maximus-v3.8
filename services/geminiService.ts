@@ -1,3 +1,5 @@
+// FIX: Import React to resolve 'React' is not defined error for SetStateAction type.
+import React from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { DetectedObject, PlanStep, OcrResult, RobotState } from '../types';
 
